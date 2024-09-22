@@ -3,6 +3,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { Tweet } from './tweet.schema';
 import axios from 'axios';
+import { Kafka } from 'kafkajs';
 
 @Injectable()
 export class TweetService {
@@ -19,7 +20,11 @@ export class TweetService {
     await this.validateUser(createTweetDto.authorId);
 
     const newTweet = new this.tweetModel(createTweetDto);
-    return newTweet.save();
+    const tweet = await newTweet.save();
+
+    await this.publishTweetCreatedEvent(tweet);
+
+    return tweet;
   }
 
   async delete(id: string): Promise<void> {
@@ -66,5 +71,31 @@ export class TweetService {
         );
       }
     }
+  }
+
+  private async publishTweetCreatedEvent(tweet: Tweet) {
+    const kafka = new Kafka({
+      clientId: 'twitter',
+      brokers: ['kafka:9092'],
+    });
+
+    const producer = kafka.producer();
+    await producer.connect();
+
+    await producer.send({
+      topic: 'tweet-created',
+      messages: [
+        {
+          value: JSON.stringify({
+            id: tweet._id,
+            content: tweet.content,
+            authorId: tweet.authorId,
+            createdAt: tweet.createdAt,
+          }),
+        },
+      ],
+    });
+
+    await producer.disconnect();
   }
 }

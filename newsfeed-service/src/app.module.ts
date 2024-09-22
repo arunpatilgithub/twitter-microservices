@@ -1,11 +1,11 @@
 import { Module } from '@nestjs/common';
-import { AppController } from './app.controller';
-import { AppService } from './app.service';
-import { NewsfeedModule } from './newsfeed/newsfeed.module';
+import { MongooseModule } from '@nestjs/mongoose'; // Ensure this path is correct
+import { NewsfeedModule } from './newsfeed/newsfeed.module'; // Ensure this path is correct
 
 @Module({
-  imports: [NewsfeedModule],
-  controllers: [AppController],
-  providers: [AppService],
+  imports: [
+    MongooseModule.forRoot('mongodb://mongo:27017/newsfeeddb'),
+    NewsfeedModule,
+  ],
 })
 export class AppModule {}
