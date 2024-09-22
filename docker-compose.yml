@@ -1,0 +1,60 @@
+version: '3'
+services:
+  user-service:
+    build: ./user-service
+    ports:
+      - "3001:3000"
+    networks:
+      - twitter-network
+    environment:
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=user
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=twitter
+
+  tweet-service:
+    build: ./tweet-service
+    ports:
+      - "3002:3000"
+    networks:
+      - twitter-network
+    environment:
+      - MONGO_URL=mongodb://mongo:27017/tweetdb
+
+  newsfeed-service:
+    build: ./newsfeed-service
+    ports:
+      - "3003:3000"
+    networks:
+      - twitter-network
+
+  postgres:
+    image: postgres:13
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: twitter
+    ports:
+      - "5432:5432"
+    volumes:
+    - pgdata:/var/lib/postgresql/data
+    networks:
+      - twitter-network
+
+  mongo:
+    image: mongo:4.4
+    ports:
+      - "27017:27017"
+    networks:
+      - twitter-network
+    volumes:
+      - mongodata:/data/db
+
+networks:
+  twitter-network:
+    driver: bridge
+
+volumes:
+  pgdata:
+  mongodata:
