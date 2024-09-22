@@ -29,6 +29,16 @@ services:
     networks:
       - twitter-network
 
+  search-service:
+    build: ./search-service
+    ports:
+      - "3004:3000"
+    networks:
+      - twitter-network
+    environment:
+      - KAFKA_BROKER=kafka:9092
+      - ELASTICSEARCH_HOST=http://elasticsearch:9200
+
   postgres:
     image: postgres:13
     environment:
@@ -71,6 +81,18 @@ services:
     networks:
       - twitter-network
 
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.17.0
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+    ports:
+      - "9200:9200"
+    networks:
+      - twitter-network
+    volumes:
+      - esdata:/usr/share/elasticsearch/data
+
 networks:
   twitter-network:
     driver: bridge
@@ -79,3 +101,4 @@ volumes:
   pgdata:
   mongodata:
   kafka-data:
+  esdata:
