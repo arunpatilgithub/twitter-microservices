@@ -1,2 +1,10 @@
 scripts/node_modules/
 kafka-data/
+/kafka-utils/node_modules/
+
+kafka-config/
+kafka-utils/
+test-project/
+/.idea/
+.idea/
+.DS_Store
