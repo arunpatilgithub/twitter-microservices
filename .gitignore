@@ -1,7 +1,7 @@
 scripts/node_modules/
 kafka-data/
 /kafka-utils/node_modules/
-
+node_modules/
 kafka-config/
 kafka-utils/
 test-project/

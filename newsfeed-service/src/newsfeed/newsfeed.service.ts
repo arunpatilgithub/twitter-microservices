@@ -27,19 +27,32 @@ export class NewsfeedService implements OnModuleInit {
 
     await consumer.run({
       eachMessage: async ({ message }) => {
-        const tweetData = JSON.parse(message.value.toString());
-        console.log('New Tweet received:', tweetData);
+        try {
+          // Parse tweet data from Kafka message
+          const tweetData = JSON.parse(message.value.toString());
+          console.log('New Tweet received:', tweetData);
 
-        const newsfeedEntry = new this.newsfeedModel({
-          userId: tweetData.authorId,
-          tweetId: tweetData.id,
-          content: tweetData.content,
-          authorId: tweetData.authorId,
-          createdAt: tweetData.createdAt,
-        });
+          // Validate tweetId
+          if (!tweetData.tweetId) {
+            throw new Error('tweetId is missing in the payload');
+          }
 
-        await newsfeedEntry.save();
-        console.log('Tweet saved to newsfeed for user:', tweetData.authorId);
+          // Save to MongoDB
+          const newsfeedEntry = new this.newsfeedModel({
+            userId: tweetData.authorId, // The user ID that follows the author
+            tweetId: tweetData.tweetId, // Correct field for Tweet ID
+            content: tweetData.content, // Content of the tweet
+            authorId: tweetData.authorId, // Author ID of the tweet
+            createdAt: tweetData.createdAt, // Timestamp when the tweet was created
+          });
+
+          await newsfeedEntry.save();
+          console.log(
+            `Tweet saved to newsfeed for user: ${tweetData.authorId}`,
+          );
+        } catch (error) {
+          console.error('Error processing tweet-created event:', error.message);
+        }
       },
     });
   }
