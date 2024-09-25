@@ -4,16 +4,19 @@ import { Model } from 'mongoose';
 import { Tweet } from './tweet.schema';
 import axios from 'axios';
 import axiosRetry from 'axios-retry';
+import { Kafka } from 'kafkajs';
+import { RedisService } from '../redis/redis.service';
 const CircuitBreaker = require('opossum');
-
-import { Kafka } from 'kafkajs'; // KafkaJS for publishing
 
 @Injectable()
 export class TweetService {
   private readonly kafkaProducer: any;
   private readonly breaker: any;
 
-  constructor(@InjectModel(Tweet.name) private tweetModel: Model<Tweet>) {
+  constructor(
+    @InjectModel(Tweet.name) private tweetModel: Model<Tweet>,
+    private redisService: RedisService,
+  ) {
     // Kafka client and producer setup
     const kafka = new Kafka({
       clientId: 'twitter',
@@ -46,24 +49,24 @@ export class TweetService {
     axiosRetry(axios, { retries: 3 });
   }
 
+  // Find all tweets in MongoDB (only if needed)
   async findAll(): Promise<Tweet[]> {
     return this.tweetModel.find().exec();
   }
 
+  // Create tweet and publish to Kafka
   async create(createTweetDto: {
     content: string;
     authorId: number;
-  }): Promise<Tweet> {
+  }): Promise<any> {
     // Validate the user using the circuit breaker
     await this.validateUserWithCircuitBreaker(createTweetDto.authorId);
 
-    const newTweet = new this.tweetModel(createTweetDto);
-    const tweet = await newTweet.save();
+    // Publish the tweet to Kafka first
+    await this.publishTweetCreatedEvent(createTweetDto);
 
-    // Publish the tweet-created event
-    await this.publishTweetCreatedEvent(tweet);
-
-    return tweet;
+    // Return a success message or confirmation
+    return { message: 'Tweet published to Kafka for further processing' };
   }
 
   async delete(id: string): Promise<void> {
@@ -82,22 +85,13 @@ export class TweetService {
   }
 
   // DLQ handling when Kafka publishing fails
-  private async handleDLQ(tweet: Tweet) {
+  private async handleDLQ(tweet: any) {
     try {
       console.log('Sending message to DLQ...');
       await this.kafkaProducer.connect();
       await this.kafkaProducer.send({
         topic: 'tweet-created-dlq',
-        messages: [
-          {
-            value: JSON.stringify({
-              tweetId: tweet._id, // Correct tweetId
-              content: tweet.content,
-              authorId: tweet.authorId,
-              createdAt: tweet.createdAt,
-            }),
-          },
-        ],
+        messages: [{ value: JSON.stringify(tweet) }],
       });
       console.log('Message sent to DLQ');
     } catch (dlqError) {
@@ -108,21 +102,12 @@ export class TweetService {
   }
 
   // Main method to publish events to Kafka, using retry and circuit breaker
-  private async publishWithRetry(tweet: Tweet) {
+  private async publishWithRetry(createTweetDto: any) {
     try {
       await this.kafkaProducer.connect();
       await this.kafkaProducer.send({
         topic: 'tweet-created',
-        messages: [
-          {
-            value: JSON.stringify({
-              tweetId: tweet._id, // Correct tweetId
-              content: tweet.content,
-              authorId: tweet.authorId,
-              createdAt: tweet.createdAt,
-            }),
-          },
-        ],
+        messages: [{ value: JSON.stringify(createTweetDto) }],
       });
       console.log('Message sent to Kafka');
     } catch (error) {
@@ -134,13 +119,13 @@ export class TweetService {
   }
 
   // Method to publish the tweet-created event, with DLQ handling on failure
-  private async publishTweetCreatedEvent(tweet: Tweet) {
+  private async publishTweetCreatedEvent(createTweetDto: any) {
     try {
       // Use the circuit breaker to send the message
-      await this.breaker.fire(tweet);
+      await this.breaker.fire(createTweetDto);
     } catch (error) {
       console.error('Circuit breaker failed, sending to DLQ:', error.message);
-      await this.handleDLQ(tweet); // Send to DLQ on failure
+      await this.handleDLQ(createTweetDto); // Send to DLQ on failure
     }
   }
 
@@ -209,7 +194,6 @@ export class TweetService {
     try {
       await validateUserBreaker.fire(authorId);
     } catch (error) {
-      // Include the specific error message from Axios instead of a generic error
       const detailedError =
         error instanceof HttpException ? error.getResponse() : error.message;
       throw new HttpException(

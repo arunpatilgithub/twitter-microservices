@@ -81,6 +81,16 @@ services:
     networks:
       - twitter-network
 
+  redis:
+    image: redis:6.2
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - twitter-network
+
+
   elasticsearch:
     image: docker.elastic.co/elasticsearch/elasticsearch:8.10.2
     environment:
@@ -98,6 +108,7 @@ networks:
     driver: bridge
 
 volumes:
+  redis-data:
   pgdata:
   mongodata:
   kafka-data:

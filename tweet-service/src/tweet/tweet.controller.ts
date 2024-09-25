@@ -16,8 +16,15 @@ export class TweetController {
   constructor(private readonly tweetService: TweetService) {}
 
   @Get()
-  findAll(): Promise<Tweet[]> {
-    return this.tweetService.findAll();
+  async findAll(): Promise<Tweet[]> {
+    try {
+      return await this.tweetService.findAll();
+    } catch (error) {
+      throw new HttpException(
+        'Failed to retrieve tweets',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
   }
 
   @Post()
@@ -25,13 +32,14 @@ export class TweetController {
     @Body() createTweetDto: { content: string; authorId: number },
   ): Promise<Tweet> {
     try {
+      // Handle tweet creation and hybrid push-pull logic in the service
       return await this.tweetService.create(createTweetDto);
     } catch (error) {
       if (error instanceof HttpException) {
         throw error;
       }
       throw new HttpException(
-        'Internal Server Error',
+        'Failed to create tweet',
         HttpStatus.INTERNAL_SERVER_ERROR,
       );
     }
@@ -39,7 +47,17 @@ export class TweetController {
 
   @Delete(':id')
   async delete(@Param('id') id: string): Promise<void> {
-    console.log(`Received delete request for tweet with id: ${id}`);
-    await this.tweetService.delete(id);
+    try {
+      console.log(`Received delete request for tweet with id: ${id}`);
+      await this.tweetService.delete(id);
+    } catch (error) {
+      if (error instanceof HttpException) {
+        throw error;
+      }
+      throw new HttpException(
+        'Failed to delete tweet',
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
   }
 }
