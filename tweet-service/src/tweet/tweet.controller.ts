@@ -30,10 +30,10 @@ export class TweetController {
   @Post()
   async create(
     @Body() createTweetDto: { content: string; authorId: number },
-  ): Promise<Tweet> {
+  ): Promise<{ message: string }> {
     try {
-      // Handle tweet creation and hybrid push-pull logic in the service
-      return await this.tweetService.create(createTweetDto);
+      await this.tweetService.create(createTweetDto);
+      return { message: 'Tweet created successfully and processed via Kafka' };
     } catch (error) {
       if (error instanceof HttpException) {
         throw error;

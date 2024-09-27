@@ -12,6 +12,7 @@ const CircuitBreaker = require('opossum');
 export class TweetService {
   private readonly kafkaProducer: any;
   private readonly breaker: any;
+  private readonly followerThreshold = 10;
 
   constructor(
     @InjectModel(Tweet.name) private tweetModel: Model<Tweet>,
@@ -49,24 +50,31 @@ export class TweetService {
     axiosRetry(axios, { retries: 3 });
   }
 
-  // Find all tweets in MongoDB (only if needed)
   async findAll(): Promise<Tweet[]> {
     return this.tweetModel.find().exec();
   }
 
-  // Create tweet and publish to Kafka
   async create(createTweetDto: {
     content: string;
     authorId: number;
-  }): Promise<any> {
+  }): Promise<void> {
     // Validate the user using the circuit breaker
     await this.validateUserWithCircuitBreaker(createTweetDto.authorId);
 
-    // Publish the tweet to Kafka first
+    const followerCount = await this.getFollowerCount(createTweetDto.authorId);
+
+    if (followerCount < this.followerThreshold) {
+      // Push model: Save to both Redis and MongoDB
+      await this.saveTweetToCacheAndDB(createTweetDto);
+    } else {
+      // Pull model: Save only to MongoDB
+      await this.saveTweetToDB(createTweetDto);
+    }
+
+    // 1. Publish the tweet to Kafka first
     await this.publishTweetCreatedEvent(createTweetDto);
 
-    // Return a success message or confirmation
-    return { message: 'Tweet published to Kafka for further processing' };
+    console.log('Tweet published to Kafka successfully');
   }
 
   async delete(id: string): Promise<void> {
@@ -84,14 +92,66 @@ export class TweetService {
     }
   }
 
+  // Method to publish the tweet-created event, with DLQ handling on failure
+  private async publishTweetCreatedEvent(createTweetDto: any) {
+    try {
+      // Use the circuit breaker to send the message
+      await this.breaker.fire(createTweetDto);
+    } catch (error) {
+      console.error('Circuit breaker failed, sending to DLQ:', error.message);
+      await this.handleDLQ(createTweetDto); // Send to DLQ on failure
+    }
+  }
+
+  // Helper to persist in both Redis and MongoDB
+  private async saveTweetToCacheAndDB(tweet: any) {
+    try {
+      // Save to MongoDB
+      const newTweet = new this.tweetModel(tweet);
+      await newTweet.save();
+
+      // Save to Redis
+      await this.redisService.set(
+        `tweet:${newTweet._id}`,
+        JSON.stringify(newTweet),
+      );
+
+      console.log('Tweet saved to both Redis and MongoDB');
+    } catch (error) {
+      console.error('Error saving tweet to Redis and MongoDB:', error.message);
+      throw error;
+    }
+  }
+
+  // Helper to persist only in MongoDB
+  private async saveTweetToDB(tweet: any) {
+    try {
+      const newTweet = new this.tweetModel(tweet);
+      await newTweet.save();
+      console.log('Tweet saved to MongoDB');
+    } catch (error) {
+      console.error('Error saving tweet to MongoDB:', error.message);
+      throw error;
+    }
+  }
+
   // DLQ handling when Kafka publishing fails
-  private async handleDLQ(tweet: any) {
+  private async handleDLQ(tweet: Tweet) {
     try {
       console.log('Sending message to DLQ...');
       await this.kafkaProducer.connect();
       await this.kafkaProducer.send({
         topic: 'tweet-created-dlq',
-        messages: [{ value: JSON.stringify(tweet) }],
+        messages: [
+          {
+            value: JSON.stringify({
+              tweetId: tweet._id,
+              content: tweet.content,
+              authorId: tweet.authorId,
+              createdAt: tweet.createdAt,
+            }),
+          },
+        ],
       });
       console.log('Message sent to DLQ');
     } catch (dlqError) {
@@ -107,7 +167,11 @@ export class TweetService {
       await this.kafkaProducer.connect();
       await this.kafkaProducer.send({
         topic: 'tweet-created',
-        messages: [{ value: JSON.stringify(createTweetDto) }],
+        messages: [
+          {
+            value: JSON.stringify(createTweetDto),
+          },
+        ],
       });
       console.log('Message sent to Kafka');
     } catch (error) {
@@ -115,17 +179,6 @@ export class TweetService {
       throw error;
     } finally {
       await this.kafkaProducer.disconnect();
-    }
-  }
-
-  // Method to publish the tweet-created event, with DLQ handling on failure
-  private async publishTweetCreatedEvent(createTweetDto: any) {
-    try {
-      // Use the circuit breaker to send the message
-      await this.breaker.fire(createTweetDto);
-    } catch (error) {
-      console.error('Circuit breaker failed, sending to DLQ:', error.message);
-      await this.handleDLQ(createTweetDto); // Send to DLQ on failure
     }
   }
 
@@ -200,6 +253,19 @@ export class TweetService {
         `User validation failed: ${detailedError}`,
         HttpStatus.SERVICE_UNAVAILABLE,
       );
+    }
+  }
+
+  // Method to get follower count
+  private async getFollowerCount(authorId: number): Promise<number> {
+    try {
+      const response = await axios.get(
+        `http://user-service:3000/users/${authorId}/followers/count`,
+      );
+      return response.data.count;
+    } catch (error) {
+      console.error('Error getting follower count:', error.message);
+      return 0; // Fallback to 0 if the API call fails
     }
   }
 }
